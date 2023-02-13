@@ -1,2 +1,2 @@
 # praca_rekrutacja
-Repozytorium przeznaczone do zadań rekrutacyjnych do pracy
+Repozytorium przeznaczone do zadania rekrutacyjnego do pracy
