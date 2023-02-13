@@ -1,0 +1,168 @@
+# Potrzebne biblioteki ----
+
+library(data.table)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(graphics)
+library(scales)
+library(stats)
+library(glue)
+library(forecast)
+library(MLmetrics)
+
+
+# Wczytanie i scalenie plików z danymi (punkt 1.)----
+
+data_atm_1 <- data.table::fread('Dane/data_ATM1.csv')
+data_atm_2 <- data.table::fread('Dane/data_ATM2.csv')
+data_atm_3 <- data.table::fread('Dane/data_ATM3.csv')
+data_atm_4 <- data.table::fread('Dane/data_ATM4.csv')
+data_atm_5 <- data.table::fread('Dane/data_ATM5.csv')
+data_atm_6 <- data.table::fread('Dane/data_ATM6.csv')
+data_atm_7 <- data.table::fread('Dane/data_ATM7.csv')
+data_atm_8 <- data.table::fread('Dane/data_ATM8.csv')
+data_atm_9 <- data.table::fread('Dane/data_ATM9.csv')
+
+data <- data.table::rbindlist(list(data_atm_1, data_atm_2, data_atm_3,
+                                   data_atm_4, data_atm_5, data_atm_6,
+                                   data_atm_7, data_atm_8, data_atm_9))
+
+
+# Analiza danych na podstawie miesięcy, dni miesięcy, dni tygodnia (punkt 2.) ----
+
+data[, Month := lubridate::month(ProcessDate, label = TRUE)]
+data[, MonthDay := lubridate::mday(ProcessDate)]
+data[, WeekDay := lubridate::wday(ProcessDate, label = TRUE)]
+data[, WeekDay := gsub("\\\\.", "", WeekDay)]
+
+# Analiza tylko na podstawie metryk okresu czasu
+
+monthly_analysis <- data[, .(Withdrawal_sum = sum(Withdrawal)), .(Month)]
+month_day_analysis <- data[, .(Withdrawal_sum = sum(Withdrawal)), .(MonthDay)]
+week_day_analysis <- data[, .(Withdrawal_sum = sum(Withdrawal)), .(WeekDay)]
+week_day_analysis <- week_day_analysis[, WeekDay := factor(WeekDay, levels = c(
+  'pt', 'czw', 'sob', 'pon', 'śr', 'wt', 'niedz'
+))]
+
+# Wykresy
+
+monthly_analysis_plot <- ggplot2::ggplot(data = monthly_analysis) +
+  ggplot2::geom_line(aes(x = Month, y = Withdrawal_sum, group = 1), color = 'red') +
+  ggplot2::labs(x = 'Miesiąc', y = 'Suma wypłat', 
+                title = 'Suma wypłat w bankomatach z podziałem na miesiące') +
+  ggplot2::scale_y_continuous(labels = scales::comma)
+
+month_day_analysis_plot <- ggplot2::ggplot(data = month_day_analysis) +
+  ggplot2::geom_line(aes(x = MonthDay, y = Withdrawal_sum, group = 1), color = 'blue') +
+  ggplot2::labs(x = 'Dzień miesiąca', y = 'Suma wypłat', 
+                title = 'Suma wypłat w bankomatach z podziałem na dni miesiąca') +
+  ggplot2::scale_y_continuous(labels = scales::comma)
+
+week_day_analysis_plot <- ggplot2::ggplot(data = week_day_analysis) +
+  ggplot2::geom_col(aes(x = WeekDay, y = Withdrawal_sum, group = 1), 
+                    fill = 'green') +
+  ggplot2::labs(x = 'Dzień tygodnia', y = 'Suma wypłat', 
+                title = 'Suma wypłat w bankomatach z podziałem na dni tygodnia') +
+  ggplot2::scale_y_continuous(labels = scales::comma)
+
+# Odpowiedzi do wykresów:
+
+# Patrząc na wykres miesięczny możemy zaobserować, że najwyższe wypłaty z bankomatów
+# przypadają na miesiące styczeń i luty oraz lipiec i sierpień. Pierwsza myśl jaka
+# przychodzi tutaj, to że może mieć to związek z feriami i wakacjami. Ludzie częściej
+# korzystają z urlopów w tych okresach, więc częściej może być im potrzebna na przykład
+# gotówka z bankomatu. Najmniej wypłat przypada na koniec roku - listopad i grudzień.
+# Przede wszystkim ma to związek z tym, że badany okres jest niepełny - brakuje 
+# listopada i grudnia 2019 roku do pełnego trzyletniego okresu, więc dla tych 
+# miesięcy brakuje 33,3 % danych. Natomiast i tak zastanawiający jest grudzień, 
+# gdyż mamy wtedy święta Bożego Narodzenia, ludzie wydają wtedy sporo pieniędzy na 
+# prezenty i zakupy świąteczne a nawet jakbyśmy w najprostszym rozumowaniu dodali
+# do grudnia średnią ilość wypłat z poprzednich grudni to byłby on gdzieś w środku 
+# stawki.
+# 
+# Wykres z podziałem na dni miesiąca pokazuje, że zdecydowanie najwięcej wypłat występuje
+# 10. dnia miesiąca, a najmniej ostatniego dnia miesiąca. Tutaj można się pokusić o 
+# stwierdzenie, że wpływ na to może mieć otrzymywanie wynagrodzeń z pracy. Większość
+# firm stosuje zasadę wypłacania pienięniędzy za pracę do 10. dnia miesiąca, a zazwyczaj
+# przypada to na 8., 9. lub 10. dzień miesiąca. Znaczący przypływ ieniędzy na konto działa 
+# zachęcająco do wydania części tej sumy, zrobienia wszelkich opłat miesięcznych, itd.
+# 
+# Wykres z odziałem na dni tygodnia pokazuje, że najwięcej wypłacanej gotówki jest 
+# w piątek, czyli na początek weekendu, kiedy to spora liczba osób wybiera się na zakupy,
+# rozrywkę, imprezy. Najmniejszy wynik w przypadku niedzieli może mieć związek 
+# z ograniczeniami w handlu wprowadzonymi kilka lat temu przez rząd polski (zamknięcie 
+# sklepów i galerii handlowych).
+
+
+# Prognoza (punkt 3.) ----
+
+# ARIMA (AutoRegressive Integrated Moving Average) jest popularnym modelem statystycznym, 
+# który jest używany do prognozowania szeregów czasowych. Model opiera się na analizie 
+# trendów i sezonowości w danych historycznych, a także na wprowadzeniu korekty dla 
+# tendencji i sezonowości, aby lepiej przewidzieć przyszłe wartości.
+# W procesie tworzenia modelu ARIMA, wyznaczane są różne parametry, takie jak 
+# autoregresja (AR), integracja (I) i średnia ruchoma (MA), które są następnie używane 
+# do prognozowania wartości w przyszłości. Model ten jest uważany za jednego z najbardziej 
+# elastycznych i uniwersalnych modeli prognozowania, ponieważ może być dostosowany do 
+# różnych typów danych i sytuacji biznesowych.
+# 
+# Błąd prognozy modelu ARIMA będzie mierzony jako różnica między wartościami prognozowanymi 
+# przez model a wartościami rzeczywistymi dla danych prognozowanych. Na przykład, jeśli 
+# nasz model prognozuje sprzedaż na poziomie 100 produktów na kolejny dzień, a rzeczywista 
+# sprzedaż wynosi 120 produktów, to nasz błąd prognozy wynosi 20 produktów.
+# 
+# Błąd dopasowania modelu ARIMA będzie mierzony jako różnica między wartościami 
+# prognozowanymi przez model a wartościami rzeczywistymi dla danych historycznych. 
+# Na przykład, jeśli nasz model prognozuje sprzedaż na poziomie 90 produktów w dniu 10, 
+# a rzeczywista sprzedaż wynosi 100 produktów, to nasz błąd dopasowania wynosi 10 produktów.
+
+errors_table <- data.table::data.table()
+
+for (i in 1:9) {
+  
+  data_temp <- data[Atm == glue::glue("ATM{i}")]
+  
+  ts_data <- stats::ts(data_temp$Withdrawal, frequency = 365)
+  train <- ts_data[1:(length(ts_data) - 30)]
+  test <- ts_data[(length(ts_data) - 29):length(ts_data)]
+  
+  # Model ARIMA
+  model <- forecast::auto.arima(train)
+  
+  # Prognoza na części testowej
+  forecast <- forecast::forecast(model, h = 30)
+  
+  # Obliczenie błędu prognozy
+  forecast_diff <- forecast$mean - test
+  error_forecast <- MLmetrics::MAPE(forecast$mean, test)
+  
+  # Policzenie błędu dopasowania
+  fit_diff <- train - stats::fitted(model)
+  error_fit <- mean(fit_diff)
+  
+  # Połączenie błędów w tabelę
+  errors_table_temp <- data.table::data.table(Atm = glue::glue('ATM_{i}'),
+                                              ForecastError = round(error_forecast, 3),
+                                              FitError = round(error_fit, 3))
+  errors_table <- data.table::rbindlist(list(errors_table, errors_table_temp))
+  
+  # Prognoza na 60 dni
+  
+  forecast_60_days <- forecast::forecast(model, h = 90)
+  plot_temp <- graphics::plot(forecast_60_days, 
+                              col = "red", xlab = "Time", ylab = "Withdrawal", 
+                              main = glue::glue("ARIMA for ATM {i}"), type = 'l')
+  assign(paste("plot_atm_", i), plot_temp)
+  
+  rm(ts_data, train, test, model, forecast, forecast_diff, error_forecast,
+     error_fit, fit_diff, forecast_60_days, plot_temp)
+}
+
+# Zapytanie SQL (punkt 4.) ----
+
+"SELECT *
+FROM (SELECT Atm, ProcessDate, Currency, Withdrawal, Deposit,
+      row_number() OVER (PARTITION BY Atm ORDER BY ProcessDate DESC) AS ProcessDateOrder
+      FROM Atm_History) Atm_History_Temp
+WHERE Atm_History_Temp.ProcessDateOrder = 1;"
