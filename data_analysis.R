@@ -9,7 +9,6 @@ library(scales)
 library(stats)
 library(glue)
 library(forecast)
-library(MLmetrics)
 
 
 # Wczytanie i scalenie plików z danymi (punkt 1.)----
@@ -135,7 +134,7 @@ for (i in 1:9) {
   
   # Obliczenie błędu prognozy
   forecast_diff <- forecast$mean - test
-  error_forecast <- MLmetrics::MAPE(forecast$mean, test)
+  error_forecast <- mean(forecast_diff)
   
   # Policzenie błędu dopasowania
   fit_diff <- train - stats::fitted(model)
